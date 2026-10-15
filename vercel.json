@@ -1,8 +1,8 @@
 {
   "rewrites": [
+    { "source": "/login", "destination": "/public/login/index.html" },
+    { "source": "/login/:path*", "destination": "/public/login/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
-  "framework": null,
-  "buildCommand": "",
-  "outputDirectory": "."
+  "cleanUrls": true
 }
