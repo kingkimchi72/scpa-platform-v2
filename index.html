@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCPA Platform - Admin + Student Portals</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Geist',system-ui;background:#000;color:#fff;min-height:100vh}
+.btn{border:none;cursor:pointer;border-radius:10px;font-weight:600;transition:0.2s}
+.btn-aqua{background:#00E5FF;color:#000;padding:10px 18px;font-size:13px}
+.btn-aqua:hover{filter:brightness(1.1)}
+.btn-ghost{background:rgba(255,255,255,0.08);color:#fff;padding:8px 14px;font-size:12px}
+.btn-danger{background:rgba(255,80,80,0.15);color:#ff6b6b;padding:8px 14px;font-size:12px}
+.card{background:#1a1a1a;border:1px solid rgba(255,255,255,0.08);border-radius:16px}
+.input{width:100%;background:#000;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px 14px;color:#fff;font-size:14px;margin-top:6px}
+.label{font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;font-weight:600;letter-spacing:0.05em}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:grid;place-items:center;z-index:50;padding:20px}
+.hidden{display:none !important}
+.tab{padding:8px 14px;border-radius:20px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:rgba(255,255,255,0.08);color:#fff}
+.tab.active{background:#00E5FF;color:#000}
+.week{border-bottom:1px solid rgba(255,255,255,0.06)}
+.week:last-child{border:none}
+.lesson{background:#000;border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const SUPABASE_URL = 'https://yourdtdybgodwclxhqvbd.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlvdXJkdGR5YmdvZHdjbHhocXZiZCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzY0MzI2NDQ1LCJleHAiOjIwNzk5MDI0NDQ1fQ.B3d0V0W0Z0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q0Q'; // placeholder, will use env if set
+let supabaseClient;
+function getSupabase(){
+  if(supabaseClient) return supabaseClient;
+  const url = localStorage.getItem('sb_url') || SUPABASE_URL;
+  const key = localStorage.getItem('sb_key') || SUPABASE_ANON;
+  // Try to get from meta tags or use hardcoded demo - user must set
+  supabaseClient = supabase.createClient(url, key);
+  return supabaseClient;
+}
+// Better: use the actual keys from your project - set below
+const SB_URL = 'https://vxtgawjkhikgqmfqzqhg.supabase.co'; // REPLACE WITH YOUR SUPABASE URL
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4dGdhd2praGlrZ3FtZnF6cWhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQyMzQ1NjcsImV4cCI6MjA3OTgxMDU2N30.KXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyXyX'; // REPLACE
+let sb;
+try{
+  // Use keys from localStorage or prompt
+  const storedUrl = localStorage.getItem('SCPA_SB_URL');
+  const storedKey = localStorage.getItem('SCPA_SB_KEY');
+  if(storedUrl && storedKey){
+    sb = supabase.createClient(storedUrl, storedKey);
+  } else {
+    // Fallback - will try env from window
+    sb = supabase.createClient(
+      window.NEXT_PUBLIC_SUPABASE_URL || SB_URL,
+      window.NEXT_PUBLIC_SUPABASE_ANON_KEY || SB_KEY
+    );
+  }
+}catch(e){
+  console.log('Supabase init error', e);
+}
+
+let schools = [];
+let weeks = [];
+let lessons = [];
+let editingSchool = null;
+let currentSchool = null;
+let activeWeek = null;
+let activeTab = 'curriculum';
+
+function getSlugFromUrl(){
+  const path = window.location.pathname.replace(/^\/|\/$/g,'');
+  const search = new URLSearchParams(window.location.search);
+  if(search.get('school')) return search.get('school');
+  if(window.location.hash) return window.location.hash.replace('#','').replace('/','');
+  if(path && path !== 'index.html' && path !== '') return path.split('/')[0];
+  return null;
+}
+
+async function init(){
+  const slug = getSlugFromUrl();
+  if(slug && slug !== 'admin'){
+    // Try student portal
+    await renderStudentPortal(slug);
+  } else {
+    await renderAdmin();
+  }
+}
+
+async function fetchSchools(){
+  if(!sb) return [];
+  const { data, error } = await sb.from('schools').select('*').order('created_at',{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+
+async function renderAdmin(){
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div style="border-bottom:1px solid rgba(255,255,255,0.08);padding:16px 32px;display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:36px;height:36px;background:#00E5FF;border-radius:10px;display:grid;place-items:center;color:#000;font-weight:bold">S</div>
+        <div><div style="font-weight:700;font-size:15px">SCPA Platform</div><div style="font-size:11px;color:rgba(255,255,255,0.5)">Master Admin Portal • Single File Build</div></div>
+      </div>
+      <button class="btn btn-aqua" onclick="openAdd()">Add School +</button>
+    </div>
+    <div style="max-width:1200px;margin:0 auto;padding:32px">
+      <div id="stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:32px"></div>
+      <div class="card" style="overflow:hidden">
+        <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between"><h2 style="font-size:16px">School Sites & Student Portals</h2><span id="count" style="font-size:12px;color:rgba(255,255,255,0.5)"></span></div>
+        <div id="list" style="display:grid;gap:1px;background:rgba(255,255,255,0.08)"><div style="padding:40px;text-align:center;color:rgba(255,255,255,0.5);background:#1a1a1a">Loading schools...</div></div>
+      </div>
+      <div style="margin-top:24px;background:#111;border:1px dashed rgba(0,229,255,0.3);border-radius:12px;padding:16px">
+        <div style="font-size:12px;color:#00E5FF;font-weight:600;margin-bottom:6px">STUDENT PORTAL LINKS - How students access:</div>
+        <div id="links" style="font-size:12px;color:rgba(255,255,255,0.6)"></div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:8px">Vercel serves everything from index.html - use /?school=SLUG or /#SLUG or /SLUG (with rewrite). All work.</div>
+      </div>
+    </div>
+    <div id="modal" class="modal hidden">
+      <div style="background:#1a1a1a;border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:28px;width:100%;max-width:520px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 id="modalTitle" style="font-size:18px">Add New School</h2><button onclick="closeModal()" class="btn btn-ghost">✕</button></div>
+        <form id="schoolForm" style="display:grid;gap:16px">
+          <div><div class="label">School Name *</div><input id="f_name" class="input" placeholder="Bella Downey Institute" required oninput="autoSlug()"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div class="label">Subdomain / Slug *</div><input id="f_slug" class="input" placeholder="bella-downey" required><div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">Portal: /<span id="slugPreview">slug</span></div></div><div><div class="label">State</div><input id="f_state" class="input" value="CA"></div></div>
+          <div><div class="label">Owner Email *</div><input id="f_email" type="email" class="input" required></div>
+          <div><div class="label">Owner Full Name</div><input id="f_owner" class="input" placeholder="Dr. Sarah Chen"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div class="label">Aqua Color</div><input id="f_color" type="color" value="#00E5FF" style="width:100%;height:44px;background:#000;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:4px;margin-top:6px"></div><div><div class="label">Plan</div><select id="f_plan" class="input"><option value="starter">Starter</option><option value="growth" selected>Growth</option><option value="scale">Scale</option></select></div></div>
+          <button type="submit" class="btn btn-aqua" style="padding:14px;font-weight:700;margin-top:8px"><span id="submitText">Create School + Portal →</span></button>
+        </form>
+      </div>
+    </div>
+  `;
+  schools = await fetchSchools();
+  document.getElementById('count').innerText = schools.length + ' schools';
+  document.getElementById('stats').innerHTML = `
+    <div class="card" style="padding:20px"><div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:8px">TOTAL SCHOOLS</div><div style="font-size:28px;font-weight:700">${schools.length}</div></div>
+    <div class="card" style="padding:20px"><div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:8px">ACTIVE PORTALS</div><div style="font-size:28px;font-weight:700">${schools.length}</div><div style="font-size:11px;color:#00E5FF;margin-top:4px">Single index.html routing</div></div>
+    <div class="card" style="padding:20px"><div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:8px">BUILD</div><div style="font-size:14px;font-weight:600">index.html SPA • No Next.js</div></div>
+  `;
+  document.getElementById('list').innerHTML = schools.map(s=>`
+    <div style="background:#1a1a1a;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="width:44px;height:44px;background:${s.primary_color||s.custom_aqua_color||'#00E5FF'};border-radius:12px;display:grid;place-items:center;color:#000;font-weight:bold;font-size:14px">${s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</div>
+        <div><div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px">${s.name}<span style="font-size:10px;background:rgba(0,229,255,0.15);color:#00E5FF;padding:2px 8px;border-radius:20px">${s.subdomain}</span></div><div style="font-size:12px;color:rgba(255,255,255,0.5)">${s.owner_email} • ${s.state} • ${s.plan}</div></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a href="/?school=${s.subdomain_slug||s.subdomain}" target="_blank" style="background:#fff;color:#000;text-decoration:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600">View Portal →</a>
+        <button onclick="editSchool('${s.id}')" class="btn btn-ghost">Manage</button>
+        <button onclick="deleteSchool('${s.id}')" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  `).join('') || `<div style="padding:40px;text-align:center;background:#1a1a1a;color:rgba(255,255,255,0.5)">No schools yet. Click Add School.</div>`;
+
+  document.getElementById('links').innerHTML = schools.map(s=>`<div style="margin-bottom:4px">• <b>${s.name}</b>: <code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px">/?school=${s.subdomain}</code> or <code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px">/#${s.subdomain}</code> or <code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px">/${s.subdomain}</code></div>`).join('');
+
+  document.getElementById('schoolForm').addEventListener('submit', handleForm);
+}
+
+function autoSlug(){
+  const name = document.getElementById('f_name').value;
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  document.getElementById('f_slug').value = slug;
+  document.getElementById('slugPreview').innerText = slug || 'slug';
+}
+
+function openAdd(){
+  editingSchool = null;
+  document.getElementById('modalTitle').innerText = 'Add New School';
+  document.getElementById('submitText').innerText = 'Create School + Portal →';
+  document.getElementById('f_name').value=''; document.getElementById('f_slug').value=''; document.getElementById('f_email').value=''; document.getElementById('f_owner').value=''; document.getElementById('f_state').value='CA'; document.getElementById('f_color').value='#00E5FF'; document.getElementById('f_plan').value='growth';
+  document.getElementById('slugPreview').innerText='slug';
+  document.getElementById('modal').classList.remove('hidden');
+}
+function closeModal(){ document.getElementById('modal').classList.add('hidden'); }
+async function editSchool(id){
+  const s = schools.find(x=>x.id===id);
+  if(!s) return;
+  editingSchool = s;
+  document.getElementById('modalTitle').innerText = 'Manage School - ' + s.name;
+  document.getElementById('submitText').innerText = 'Save Changes →';
+  document.getElementById('f_name').value=s.name; document.getElementById('f_slug').value=s.subdomain; document.getElementById('f_email').value=s.owner_email; document.getElementById('f_owner').value=''; document.getElementById('f_state').value=s.state; document.getElementById('f_color').value=s.primary_color||'#00E5FF'; document.getElementById('f_plan').value=s.plan;
+  document.getElementById('slugPreview').innerText=s.subdomain;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function deleteSchool(id){
+  if(!confirm('Delete this school?')) return;
+  const { error } = await sb.from('schools').delete().eq('id', id);
+  if(error) alert(error.message);
+  else renderAdmin();
+}
+async function handleForm(e){
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled=true; btn.innerText='Saving...';
+  const payload = {
+    name: document.getElementById('f_name').value.trim(),
+    subdomain: document.getElementById('f_slug').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'-'),
+    state: document.getElementById('f_state').value.trim() || 'CA',
+    owner_email: document.getElementById('f_email').value.trim(),
+    primary_color: document.getElementById('f_color').value,
+    custom_aqua_color: document.getElementById('f_color').value,
+    plan: document.getElementById('f_plan').value,
+    status: 'active'
+  };
+  payload.subdomain_slug = payload.subdomain;
+  let error;
+  if(editingSchool){
+    const res = await sb.from('schools').update(payload).eq('id', editingSchool.id);
+    error = res.error;
+  } else {
+    const res = await sb.from('schools').insert(payload).select().single();
+    error = res.error;
+    if(!error && res.data){
+      await sb.from('users').insert({ email: payload.owner_email, role: 'school_owner', school_id: res.data.id, full_name: document.getElementById('f_owner').value || payload.name + ' Admin' });
+      await sb.from('cohorts').insert({ school_id: res.data.id, name: 'Cohort 1 - ' + new Date().getFullYear(), start_date: new Date().toISOString().split('T')[0] });
+    }
+  }
+  btn.disabled=false;
+  if(error) alert('Error: '+error.message);
+  else { closeModal(); renderAdmin(); }
+}
+
+async function renderStudentPortal(slug){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div style="min-height:100vh;background:#000;display:grid;place-items:center;color:#fff">Loading ${slug} portal...</div>`;
+  if(!sb){
+    app.innerHTML = `<div style="min-height:100vh;background:#000;display:grid;place-items:center;color:#fff;padding:40px;text-align:center"><div><h1>Supabase not configured</h1><p style="color:rgba(255,255,255,0.5)">Set SB_URL and SB_KEY in index.html</p><a href="/" style="color:#00E5FF">← Admin</a></div></div>`;
+    return;
+  }
+  const { data: school } = await sb.from('schools').select('*').or(`subdomain.eq.${slug},subdomain_slug.eq.${slug}`).single();
+  if(!school){
+    app.innerHTML = `<div style="min-height:100vh;background:#000;display:grid;place-items:center;color:#fff;padding:40px;text-align:center"><div><h1 style="font-size:24px">School not found: ${slug}</h1><p style="color:rgba(255,255,255,0.5);margin-top:8px">Check schools table has subdomain = ${slug}</p><a href="/" style="color:#00E5FF;margin-top:20px;display:inline-block">← Back to Admin</a></div></div>`;
+    return;
+  }
+  currentSchool = school;
+  const { data: w } = await sb.from('curriculum_weeks').select('*').order('week_number');
+  const { data: l } = await sb.from('curriculum_lessons').select('*').order('order_index');
+  weeks = w || []; lessons = l || [];
+  const aqua = school.primary_color || school.custom_aqua_color || '#00E5FF';
+
+  app.innerHTML = `
+    <div style="min-height:100vh;display:flex;flex-wrap:wrap">
+      <div style="flex:1;min-width:320px;background:#000;padding:24px 32px;overflow-y:auto;max-height:100vh">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+          <div style="display:flex;align-items:center;gap:12px"><div style="width:40px;height:40px;background:${aqua};border-radius:12px;display:grid;place-items:center;color:#000;font-weight:bold">${school.name.slice(0,2).toUpperCase()}</div><div><div style="font-weight:700">${school.name}</div><div style="font-size:11px;color:rgba(255,255,255,0.5)">didactic learning portal</div></div></div>
+          <a href="/" style="font-size:11px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.08);padding:6px 12px;border-radius:20px;text-decoration:none">Admin</a>
+        </div>
+        <h1 style="font-size:38px;font-weight:800;line-height:0.9;margin:0 0 12px;letter-spacing:-0.02em">Welcome to<br><span style="color:${aqua}">${school.name}</span><br>didactic learning portal</h1>
+        <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-bottom:20px">Theory that sticks. Skills that work. Your journey to RDA starts here.</p>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+          <div class="card" style="padding:14px"><div style="font-size:11px;color:rgba(255,255,255,0.5)">PROGRESS</div><div style="font-size:20px;font-weight:700;margin-top:4px">12%</div><div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:8px"><div style="width:12%;height:100%;background:${aqua};border-radius:2px"></div></div></div>
+          <div class="card" style="padding:14px"><div style="font-size:11px;color:rgba(255,255,255,0.5)">CLOCK HOURS</div><div style="font-size:20px;font-weight:700;margin-top:4px">127</div><div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px">of 800</div></div>
+          <div class="card" style="padding:14px"><div style="font-size:11px;color:rgba(255,255,255,0.5)">GPA</div><div style="font-size:20px;font-weight:700;margin-top:4px">3.8</div><div style="font-size:11px;color:${aqua};margin-top:4px">Good standing</div></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <button onclick="setTab('curriculum')" id="tab-curriculum" class="tab active">Curriculum</button>
+          <button onclick="setTab('attendance')" id="tab-attendance" class="tab">Attendance</button>
+          <button onclick="setTab('externship')" id="tab-externship" class="tab">Externship</button>
+          <button onclick="setTab('billing')" id="tab-billing" class="tab">Billing</button>
+        </div>
+        <div id="tabContent"></div>
+      </div>
+      <div style="width:42%;min-width:320px;background:linear-gradient(180deg, ${aqua} 0%, #00BBFF 100%);position:relative;display:flex;flex-direction:column">
+        <div style="flex:1;display:grid;place-items:center;padding:32px">
+          <div style="text-align:center"><div style="font-size:11px;letter-spacing:0.2em;font-weight:700;color:rgba(0,0,0,0.6);margin-bottom:20px">SCPA • STUDENT PORTAL</div><img src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=600&h=700&fit=crop" style="width:100%;max-width:360px;height:440px;object-fit:cover;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3)"><div style="margin-top:20px;background:#000;color:#fff;display:inline-block;padding:10px 18px;border-radius:12px;font-weight:700;font-size:13px">3 students image • ${school.name}</div></div>
+        </div>
+        <div style="padding:20px 28px;background:rgba(0,0,0,0.85);backdrop-filter:blur(10px)"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:rgba(255,255,255,0.5);letter-spacing:0.1em;font-weight:600">THEORY THAT STICKS</div><div style="font-size:13px;font-weight:600;margin-top:4px">Skills that work • RDA Ready</div></div><div style="width:36px;height:36px;background:#fff;border-radius:50%;display:grid;place-items:center;color:#000;font-weight:bold">→</div></div></div>
+      </div>
+    </div>
+  `;
+  renderTab();
+}
+
+function setTab(t){
+  activeTab = t;
+  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
+  const el = document.getElementById('tab-'+t);
+  if(el) el.classList.add('active');
+  renderTab();
+}
+
+function renderTab(){
+  const container = document.getElementById('tabContent');
+  if(!container) return;
+  const aqua = currentSchool.primary_color || '#00E5FF';
+  if(activeTab==='curriculum'){
+    if(weeks.length===0){
+      container.innerHTML = `<div class="card" style="padding:32px;text-align:center;color:rgba(255,255,255,0.5)">No curriculum yet. Run SQL: <code>seed_curriculum.sql</code> in Supabase. Then refresh.<br><br>Weeks table empty. Add weeks in Supabase → curriculum_weeks.</div>`;
+      return;
+    }
+    container.innerHTML = `<div class="card" style="overflow:hidden">` + weeks.map(w=>{
+      const wl = lessons.filter(l=>l.week_id===w.id);
+      const open = activeWeek===w.week_number;
+      return `<div class="week" style="background:#111"><button onclick="toggleWeek(${w.week_number})" style="width:100%;text-align:left;background:transparent;border:none;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;cursor:pointer"><div style="display:flex;gap:12px;align-items:center"><div style="width:28px;height:28px;border-radius:8px;background:${open?aqua:'rgba(255,255,255,0.08)'};color:${open?'#000':'#fff'};display:grid;place-items:center;font-size:12px;font-weight:700">${w.week_number}</div><div><div style="font-weight:600;font-size:14px">${w.title}</div><div style="font-size:11px;color:rgba(255,255,255,0.5)">${w.description||''} • ${wl.length} lessons</div></div></div><div style="color:rgba(255,255,255,0.4)">${open?'−':'+'}</div></button>${open?`<div style="padding:0 18px 14px 58px;display:grid;gap:8px">${wl.map(l=>`<div class="lesson"><div style="display:flex;gap:10px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:${aqua}"></div><span style="font-size:13px">${l.title}</span><span style="font-size:11px;color:rgba(255,255,255,0.4)">${l.duration_minutes||30}m</span></div><button style="background:${aqua};color:#000;border:none;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:700">Start →</button></div>`).join('')}<div style="display:flex;gap:8px;margin-top:8px"><div style="background:rgba(0,229,255,0.1);border:1px solid ${aqua}40;padding:6px 10px;border-radius:8px;font-size:11px;color:${aqua}">Quiz: 70% to pass</div><div style="background:rgba(255,255,255,0.06);padding:6px 10px;border-radius:8px;font-size:11px;color:rgba(255,255,255,0.6)">+4.5 clock hours</div></div></div>`:''}</div>`;
+    }).join('') + `</div>`;
+  } else if(activeTab==='attendance'){
+    container.innerHTML = `<div class="card" style="padding:20px"><h3 style="margin-bottom:14px">Attendance Records</h3>${[1,2,3,4,5].map(d=>`<div style="display:flex;justify-content:space-between;padding:10px;background:#000;border-radius:10px;margin-bottom:8px;font-size:13px"><span>2026-01-0${d} • Week ${d}</span><span style="color:#00ff88">Present • 8 hrs</span></div>`).join('')}</div>`;
+  } else if(activeTab==='externship'){
+    container.innerHTML = `<div class="card" style="padding:20px"><h3 style="margin-bottom:14px">Externship Timesheet</h3><div style="background:#000;border-radius:12px;padding:14px;margin-bottom:12px"><div style="display:flex;justify-content:space-between"><span style="font-size:13px">Site: ${currentSchool.name} Clinic</span><span style="font-size:11px;color:${aqua}">160 hrs required</span></div><div style="height:6px;background:rgba(255,255,255,0.1);border-radius:3px;margin-top:10px"><div style="width:42%;height:100%;background:${aqua};border-radius:3px"></div></div><div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:6px">67.5 / 160 hrs completed</div></div><button style="width:100%;background:${aqua};color:#000;border:none;padding:14px;border-radius:12px;font-weight:700;cursor:pointer">Clock In • GPS Verification →</button><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:8px;text-align:center">Requires GPS at externship site • Preceptor signature</div></div>`;
+  } else {
+    container.innerHTML = `<div class="card" style="padding:20px"><h3 style="margin-bottom:14px">Billing & Plan</h3><div style="background:#000;padding:14px;border-radius:12px;display:flex;justify-content:space-between"><span>Plan: ${currentSchool.plan}</span><span style="color:${aqua}">$497/mo</span></div><div style="margin-top:12px;font-size:12px;color:rgba(255,255,255,0.5)">Owner: ${currentSchool.owner_email}<br>Subdomain: ${currentSchool.subdomain}</div></div>`;
+  }
+}
+
+function toggleWeek(n){
+  activeWeek = activeWeek===n ? null : n;
+  renderTab();
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Try to get Supabase keys from localStorage or use prompt
+  const url = prompt('Enter Supabase URL (or leave blank if already set):', localStorage.getItem('SCPA_SB_URL')||'') || localStorage.getItem('SCPA_SB_URL');
+  const key = prompt('Enter Supabase Anon Key:', localStorage.getItem('SCPA_SB_KEY')||'') || localStorage.getItem('SCPA_SB_KEY');
+  if(url && key){
+    localStorage.setItem('SCPA_SB_URL', url);
+    localStorage.setItem('SCPA_SB_KEY', key);
+    sb = supabase.createClient(url, key);
+  } else {
+    // Use hardcoded from previous project if available
+    try{
+      const savedUrl = localStorage.getItem('SCPA_SB_URL');
+      const savedKey = localStorage.getItem('SCPA_SB_KEY');
+      if(savedUrl && savedKey) sb = supabase.createClient(savedUrl, savedKey);
+    }catch(e){}
+  }
+  if(!sb){
+    // Last resort: try to use keys embedded in page (you must edit)
+    document.getElementById('app').innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;background:#000;color:#fff;padding:40px;text-align:center"><div><h2>Setup Required</h2><p style="color:rgba(255,255,255,0.6);margin-top:12px">Edit index.html line 25-26 with your Supabase URL and Anon Key,<br>then re-upload to GitHub.</p><p style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:16px">Find keys: Supabase Dashboard → Settings → API</p></div></div>`;
+    return;
+  }
+  init();
+});
+
+window.addEventListener('hashchange', init);
+</script>
+</body>
+</html>
