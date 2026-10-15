@@ -29,17 +29,17 @@ body{font-family:'Geist',system-ui;background:#000;color:#fff;min-height:100vh}
 <body>
 <div id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
 <script>
-const SUPABASE_URL = 'https://xpqwstufuiucsmtuffvc.supabase.co'; v2 fixed
-const SUPABASE_ANON = 'sb_publishable_9csDO6QGhhYsOmiFIg5CIw_uxu-Uq_5'; // placeholder, will use env if set
+const SUPABASE_URL = 'https://xpqwstufuiucsmtuffvc.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_9csDO6QGhhYsOmiFIg5CIw_uxu-Uq_5';
 let supabaseClient;
 function getSupabase(){
   if(supabaseClient) return supabaseClient;
-  const url = localStorage.getItem('sb_url') || SUPABASE_URL;
-  const key = localStorage.getItem('sb_key') || SUPABASE_ANON;
-  // Try to get from meta tags or use hardcoded demo - user must set
-  supabaseClient = supabase.createClient(url, key);
+  if(!window.supabase){ console.log("supabase lib not loaded"); return null; }
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
   return supabaseClient;
+}
 }
 // Better: use the actual keys from your project - set below
 const SB_URL = 'https://vxtgawjkhikgqmfqzqhg.supabase.co'; // REPLACE WITH YOUR SUPABASE URL
